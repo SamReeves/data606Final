@@ -1,0 +1,155 @@
+---
+title: "DATA 606 Final Project"
+author: "Sam Reeves"
+output: pdf_document
+---
+
+### Data Preparation
+
+```{r setup, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+library(zoo)
+library(tidyverse)
+library(tidymodels)
+library(TTR)
+
+rates <- read.csv(
+  "https://raw.githubusercontent.com/TheWerefriend/exchange-rate-prediction/master/rates.csv") %>%
+  na.locf()
+
+colnames(rates)[colnames(rates) == "X"] <- "date"
+rates <- mutate(rates, date=as.Date(date[[1]]))
+str(rates)
+
+set.seed(1337)
+```
+
+
+### Research question 
+
+Is it reasonable to predict the USD/MMK exchange rate using the historical data for all ***/MMK exchange rates?  Does the prediction get better when you remove some currencies as independent variables? What if we engineer some technical features like momentum, MACD, and stochastic oscillators?
+
+### Cases 
+
+Each day (this has halted since the coup), the Central Bank of Myanmar declares an exchange rate for each of 38 currencies which can be used to by Kyats.  We have nearly 10 years of data, each day is an observation, and there are 38 variables in each observation.
+
+
+### Data collection 
+
+This data was scraped from the Central Bank of Myanmar's main website.  Since the coup, the website has gone offline and this data is no longer available.  There was no formal API, however, by building URL strings it was possible to select data from specific dates.
+
+### Relevant summary statistics 
+
+Here's the model from my proposal:
+
+```{r}
+xAndY <- function(days = 1, input = rates) {
+  x <- input[1:(nrow(input)-days), 2:39]
+  return(mutate(x, y = input[(days+1):nrow(input), "USD"]))
+}
+
+dataSplit <- function(data, ratio = 0.7) {
+  n <- nrow(data) * ratio
+  train <- data[1:n,]
+  test <- data[(n+1):nrow(data),]
+  return(list(train, test))
+}
+
+data <- xAndY(7) %>% dataSplit()
+model <- lm(formula = y ~ ., data = data[[1]])
+summary(model)
+```
+```{r}
+hist(model$residuals, breaks = 100, xlim = c(-100, 100))
+
+qqnorm(model$residuals, ylim = c(-100, 100))
+```
+
+### Interpreting the summary....
+
+So here we have an R-squared value which is very very close to the maximum value of 1.  This means that nearly all of the variance in the dependent variable is explained by the model based on the independents.  There's really not a lot left to gain.  But, we are predicting timeseries data with historical information?  The typical wisdom suggests this shouldn't work.  Why does it?
+
+This is not a free-floating currency!  It isn't a monetary or inflationary target either, because the central bank doesn't have enough control over the money supply.  There is a small committee who decides what the value of the kyat is going to be, and they don't make public their method of valuation.  They introduce a small amount of randomness (and dispell many rumors about valuation by astrology) to discourage speculation in the market.  However, a multiple regression model can cut right through, revealing the engineered value.  I expect that the value is pegged to a weighted basket of currencies, and the results support this.
+
+### Improving the Model
+
+It's cute to make these most basic functions by hand and rely on the summary() function, but there is much more available.  To answer our questions, I will rebuild this model with the tidymodels package and assess the results... more thoroughly.
+
+### Q1: Does the model improve when we remove less-significant inputs?
+
+```{r}
+data <- xAndY(7)
+
+split <- initial_split(data, strata = y, p = 0.67)
+
+trainer <- training(split)
+tester <- testing(split)
+
+mmkRecipe <- recipe(y ~ CZK + ILS + KES + KWD +
+                      LAK + NOK + PHP + SEK + THB, data = trainer) %>%
+  step_center(all_predictors()) %>%
+  step_scale(all_predictors()) %>%
+  prep(training = trainer)
+
+mmkTrain <- juice(mmkRecipe)
+mmkTest <- bake(mmkRecipe, tester)
+
+mmkModel <- linear_reg(mode = "regression") %>%
+  set_engine("lm")
+
+mmkFit <- mmkModel %>%
+  fit(y ~ CZK + ILS + KES + KWD +
+        LAK + NOK + PHP + SEK + THB, data = tester)
+
+summary(mmkFit$fit)
+```
+The model performed a tiny bit worse, but is basically the same.  Perhaps this is the best we can hope for with such a study.  We note that the significance of CZK and THB were reduced in this model.  Maybe this means that those currencies are pegged to a similar basket, but are not a major part of the MMK valuation scheme.
+
+### Q2: Can we produce the same results or better using momentum and MACD from the target variable?
+
+```{r}
+USD_MACD <- MACD(data$USD, nFast = 7, nSlow = 14)
+USD_momentum <- ROC(data$USD, n = 7, type = "continuous")
+
+data <- cbind(data, USD_MACD, USD_momentum)
+
+data <- na.omit(data)
+```
+
+We train on the set one last time, removing CZK and THB and adding the new features:
+
+```{r}
+split <- initial_split(data, strata = y, p = 0.67)
+
+trainer <- training(split)
+tester <- testing(split)
+
+mmkRecipe <- recipe(y ~ ILS + KES + KWD + LAK + NOK + PHP + SEK +
+                      macd + signal + USD_momentum, data = trainer) %>%
+  step_center(all_predictors()) %>%
+  step_scale(all_predictors()) %>%
+  prep(training = trainer)
+
+mmkTrain <- juice(mmkRecipe)
+mmkTest <- bake(mmkRecipe, tester)
+
+mmkModel <- linear_reg(mode = "regression") %>%
+  set_engine("lm")
+
+mmkFit <- mmkModel %>%
+  fit(y ~ ILS + KES + KWD + LAK + NOK + PHP + SEK +
+        macd + signal + USD_momentum, data = tester)
+
+summary(mmkFit$fit)
+```
+This model has again a slightly reduced performance, but it is still pretty accurate.
+
+### Conclusions
+```{r}
+hist(mmkFit$fit$residuals, breaks = 100, xlim = c(-100, 100))
+
+qqnorm(mmkFit$fit$residuals, ylim = c(-100, 100))
+```
+
+The lm() function, when applied correctly, is extremely powerful.  This dataset lends itself to a linear model solution without much coercion, and it seems that feature engineering (as I have done, at least) weakens the model.  Inclusion of all possible input data without any secondary stats or indicators is the best way to solve for the future value of MMK/USD.
+
+
