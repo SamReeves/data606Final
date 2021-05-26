@@ -56,11 +56,11 @@ dataSplit <- function(data, ratio = 0.7) {
 
 data <- xAndY(7) %>% dataSplit()
 model <- lm(formula = y ~ ., data = data[[1]])
-summary(model)
 ```
-```{r}
-hist(model$residuals, breaks = 100, xlim = c(-100, 100))
 
+```{r}
+summary(model)
+hist(model$residuals, breaks = 100, xlim = c(-100, 100))
 qqnorm(model$residuals, ylim = c(-100, 100))
 ```
 
@@ -102,7 +102,7 @@ mmkFit <- mmkModel %>%
 
 summary(mmkFit$fit)
 ```
-The model performed a tiny bit worse, but is basically the same.  Perhaps this is the best we can hope for with such a study.  We note that the significance of CZK and THB were reduced in this model.  Maybe this means that those currencies are pegged to a similar basket, but are not a major part of the MMK valuation scheme.
+The model performed a tiny bit worse, but is basically the same.  Perhaps this is the best we can hope for with such a study.  We note that the significance of CZK, NOK, PHP, and THB were reduced in this model.  Maybe this means that those currencies are pegged to a similar basket, but are not a major part of the MMK valuation scheme.
 
 ### Q2: Can we produce the same results or better using momentum and MACD from the target variable?
 
